@@ -11,7 +11,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = "postgresql://neondb_owner:npg_0QK5JcuBvLot@ep-floral-wind-ap5qk8ll-pooler.c-7.us-east-1.aws.neon.tech/VoiceVox?sslmode=require&channel_binding=require"
+  
 }
 
 model User {
