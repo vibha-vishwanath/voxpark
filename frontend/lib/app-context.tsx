@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"
 
@@ -77,6 +77,39 @@ const AppContext = createContext<AppContextType | undefined>(undefined)
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(initialState)
 
+  // Load from local storage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("voice_app_state")
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed.isLoggedIn && parsed.userId) {
+          setState((prev) => ({
+            ...prev,
+            isLoggedIn: parsed.isLoggedIn,
+            userId: parsed.userId,
+            userInfo: parsed.userInfo,
+            currentScreen: parsed.currentScreen || "dashboard",
+          }))
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load state from localStorage", e)
+    }
+  }, [])
+
+  // Save to local storage when relevant state changes
+  useEffect(() => {
+    if (state.isLoggedIn) {
+      localStorage.setItem("voice_app_state", JSON.stringify({
+        isLoggedIn: state.isLoggedIn,
+        userId: state.userId,
+        userInfo: state.userInfo,
+        currentScreen: state.currentScreen,
+      }))
+    }
+  }, [state.isLoggedIn, state.userId, state.userInfo, state.currentScreen])
+
   const setScreen = (screen: string) => {
     setState((prev) => ({ ...prev, currentScreen: screen }))
   }
@@ -100,6 +133,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
+    localStorage.removeItem("voice_app_state")
     setState(initialState)
   }
 
