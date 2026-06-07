@@ -1,0 +1,14 @@
+numpy
+flask
+scipy
+prisma
+bcrypt
+flask-cors
+parselmouth
+opensmile
+librosa
+soundfile
+groq
+assemblyai
+gunicorn
+python-dotenv

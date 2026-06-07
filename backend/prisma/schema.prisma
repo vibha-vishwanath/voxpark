@@ -1,0 +1,38 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "sync"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://neondb_owner:npg_0QK5JcuBvLot@ep-floral-wind-ap5qk8ll-pooler.c-7.us-east-1.aws.neon.tech/VoiceVox?sslmode=require&channel_binding=require"
+}
+
+model User {
+  id    String     @id @default(cuid())
+  name  String?
+  age   String?
+  gender String?
+  email String  @unique
+  password String
+  report Report?
+}
+model Report{
+  id String @id @default(cuid())
+  userId String @unique
+  acoustic_vowel String? 
+  telemonitoring_classification String?
+  telemonitoring_regression String?
+  readText String?
+  spontaneousDialogue String?
+  ddk String?
+  naturalSpeech String?
+  report String?
+  user User @relation(fields:[userId],references:[id])
+}

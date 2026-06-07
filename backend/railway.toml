@@ -1,0 +1,8 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "prisma generate && gunicorn backend:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2"
+healthcheckPath = "/get_results"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
