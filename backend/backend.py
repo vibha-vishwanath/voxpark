@@ -10,7 +10,7 @@ import tempfile
 import os
 from dotenv import load_dotenv
 import opensmile
-import librosa
+
 import soundfile as sf
 from scipy.signal import find_peaks
 from scipy.stats import variation 
@@ -328,20 +328,28 @@ def spontaneousDialogue():
 
 #DDK
 def load_audio(file_path):
-    y, sr = librosa.load(file_path, sr=None)
+    y, sr = sf.read(file_path)
+    if len(y.shape) > 1:
+        y = np.mean(y, axis=1) # mixdown to mono
     return y, sr
 
-def extract_ddk_features(y, sr):
+def extract_ddk_features(y, sr, file_path):
     features = {}
 
     # --- 1. DDK Rate (syllables/sec via energy bursts) ---
     frame_length = int(0.025 * sr)
     hop_length = int(0.010 * sr)
-    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+    
+    num_frames = 1 + (len(y) - frame_length) // hop_length
+    if num_frames > 0:
+        rms = np.array([np.sqrt(np.mean(y[i*hop_length : i*hop_length+frame_length]**2) + 1e-9) for i in range(num_frames)])
+    else:
+        rms = np.array([0.0])
+        
     rms_norm = rms / (np.max(rms) + 1e-9)
     threshold = 0.2
     peaks, _ = find_peaks(rms_norm, height=threshold, distance=int(0.08 * sr / hop_length))
-    duration = len(y) / sr
+    duration = len(y) / sr if sr > 0 else 1.0
     ddk_rate = len(peaks) / duration
     features['ddk_rate'] = ddk_rate
 
@@ -357,54 +365,33 @@ def extract_ddk_features(y, sr):
         features['ipi_std'] = 0
         features['ipi_cv'] = 0
 
-    # --- 3. Fundamental Frequency (F0) Features ---
-    f0, voiced_flag, _ = librosa.pyin(y, fmin=50, fmax=300, sr=sr)
-    f0_voiced = f0[voiced_flag & ~np.isnan(f0)]
-    if len(f0_voiced) > 1:
-        features['f0_mean'] = np.mean(f0_voiced)
-        features['f0_std'] = np.std(f0_voiced)
-        features['f0_cv'] = variation(f0_voiced)
-        jitter = np.mean(np.abs(np.diff(f0_voiced))) / (np.mean(f0_voiced) + 1e-9)
-        features['jitter'] = jitter
-    else:
-        features['f0_mean'] = 0
-        features['f0_std'] = 0
-        features['f0_cv'] = 0
+    # --- 3. Pitch, Jitter, Shimmer, HNR using Parselmouth ---
+    try:
+        sound = parselmouth.Sound(file_path)
+        pitch = call(sound, "To Pitch", 0.0, 50, 300)
+        point_process = call(sound, "To PointProcess (periodic, cc)", 50, 300)
+        
+        # We need these specifically for rule_based_score
+        features['jitter'] = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
+        features['shimmer'] = call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
+        
+        harmonicity = call(sound, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.0)
+        features['hnr'] = call(harmonicity, "Get mean", 0, 0)
+    except Exception as e:
+        print(f"Parselmouth error: {e}")
         features['jitter'] = 0
-
-    # --- 4. Shimmer (amplitude variation) ---
-    amplitude_env = np.abs(librosa.effects.harmonic(y))
-    hop = int(0.010 * sr)
-    frame_amps = [np.mean(amplitude_env[i:i+hop]) for i in range(0, len(amplitude_env)-hop, hop)]
-    frame_amps = np.array(frame_amps)
-    if len(frame_amps) > 1:
-        shimmer = np.mean(np.abs(np.diff(frame_amps))) / (np.mean(frame_amps) + 1e-9)
-        features['shimmer'] = shimmer
-    else:
         features['shimmer'] = 0
+        features['hnr'] = 0
 
-    # --- 5. MFCCs (vocal tract / articulation quality) ---
-    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-    for i in range(13):
-        features[f'mfcc_{i+1}_mean'] = np.mean(mfccs[i])
-        features[f'mfcc_{i+1}_std'] = np.std(mfccs[i])
+    features['f0_mean'] = 0
 
-    # --- 6. HNR (Harmonics-to-Noise Ratio proxy) ---
-    harmonic, percussive = librosa.effects.hpss(y)
-    hnr = 10 * np.log10((np.sum(harmonic**2) + 1e-9) / (np.sum(percussive**2) + 1e-9))
-    features['hnr'] = hnr
-
-    # --- 7. Spectral features ---
-    spec_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
-    spec_bw = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
-    features['spectral_centroid_mean'] = np.mean(spec_centroid)
-    features['spectral_centroid_std'] = np.std(spec_centroid)
-    features['spectral_bw_mean'] = np.mean(spec_bw)
-
-    # --- 8. ZCR (voice quality / breathiness) ---
-    zcr = librosa.feature.zero_crossing_rate(y)[0]
-    features['zcr_mean'] = np.mean(zcr)
-    features['zcr_std'] = np.std(zcr)
+    # --- 4. ZCR std manually using numpy ---
+    hop = int(0.010 * sr)
+    if len(y) > hop:
+        frame_zcr = [np.mean(np.abs(np.diff(np.sign(y[i:i+hop])))) / 2 for i in range(0, len(y)-hop, hop)]
+        features['zcr_std'] = np.std(frame_zcr)
+    else:
+        features['zcr_std'] = 0
 
     return features, peaks, duration
 
@@ -496,7 +483,7 @@ def classify_parkinsons(score, flags):
 
 def analyze_ddk(file_path):
     y, sr = load_audio(file_path)
-    features, peaks, duration = extract_ddk_features(y, sr)
+    features, peaks, duration = extract_ddk_features(y, sr, file_path)
 
     print(f"\n--- Raw Feature Summary ---")
     print(f"  DDK Rate       : {features['ddk_rate']:.2f} syllables/sec  (detected {len(peaks)} bursts)")
